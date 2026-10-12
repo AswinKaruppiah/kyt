@@ -4,7 +4,6 @@
  */
 
 const { checkWallet } = require('./index');
-const { isExchange } = require('./whitelist');
 const { getIncomingTransfers } = require('./fetcher');
 
 /**
@@ -49,7 +48,7 @@ async function traceWallet(targetAddress, options = {}) {
 
   const cleanTarget = targetAddress.trim();
 
-  // 1. Direct Check (Hop 0)
+  // 1. Direct On-Chain Check (Hop 0)
   const targetCheck = await checkWallet(cleanTarget);
   if (targetCheck.isScam) {
     return {
@@ -66,24 +65,7 @@ async function traceWallet(targetAddress, options = {}) {
     };
   }
 
-  // 2. Exchange Whitelist Check
-  const exchangeCheck = isExchange(cleanTarget);
-  if (exchangeCheck.isExchange) {
-    return {
-      target: cleanTarget,
-      chain: targetCheck.chain,
-      decision: '🟢 ACCEPT (Verified Exchange)',
-      overallRiskScore: 0,
-      scamDetected: false,
-      scamHop: null,
-      flaggedWallet: null,
-      reason: `Target is an official KYC-verified exchange wallet: ${exchangeCheck.name}`,
-      visualTrail: [`🎯 Target: ${cleanTarget} 🏛️ [${exchangeCheck.name}]`],
-      stats: { hopsScanned: 0, walletsInspected: 1 }
-    };
-  }
-
-  // 3. BFS Backtracking Queue
+  // 2. BFS Backtracking Queue
   // Queue elements: { address: string, depth: number, path: Array }
   const queue = [{
     address: cleanTarget,
@@ -133,13 +115,6 @@ async function traceWallet(targetAddress, options = {}) {
         txHash: inflow.txHash
       };
       const currentPath = [...current.path, stepNode];
-
-      // Check if sender is a verified exchange (Binance, OKX, etc.)
-      const senderExchange = isExchange(sender);
-      if (senderExchange.isExchange) {
-        // Exchange terminates this branch safely
-        continue;
-      }
 
       // Check sender on-chain status
       let senderStatus;
