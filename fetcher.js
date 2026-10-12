@@ -7,6 +7,8 @@ const TRON_USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 const ETH_USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
 const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 
+const TRON_API_KEY = process.env.TRON_API_KEY || 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
+
 /**
  * Fetch incoming TRC-20 USDT transfers for a TRON wallet.
  * @param {string} tronAddress
@@ -16,7 +18,11 @@ const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
  */
 async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
   const url = `https://api.trongrid.io/v1/accounts/${tronAddress}/transactions/trc20?limit=${limit}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'TRON-PRO-API-KEY': TRON_API_KEY
+    }
+  });
   if (!res.ok) {
     throw new Error(`TronGrid Inflows HTTP error: ${res.status} ${res.statusText}`);
   }

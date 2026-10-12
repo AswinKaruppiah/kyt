@@ -47,6 +47,8 @@ function tronAddressToHexParam(tronAddress) {
   return rawHex.padStart(64, '0');
 }
 
+const TRON_API_KEY = process.env.TRON_API_KEY || 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
+
 // --- 2. Check TRON USDT Smart Contract Live ---
 async function checkTronUSDT(tronAddress) {
   const paramHex = tronAddressToHexParam(tronAddress);
@@ -54,7 +56,10 @@ async function checkTronUSDT(tronAddress) {
   // Tether TRC-20 contract hex: 41a614f803b6fd780986a42c78ec9c7f77e6ded13c (TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t)
   const res = await fetch('https://api.trongrid.io/wallet/triggerconstantcontract', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'TRON-PRO-API-KEY': TRON_API_KEY
+    },
     body: JSON.stringify({
       owner_address: '410000000000000000000000000000000000000000',
       contract_address: '41a614f803b6fd780986a42c78ec9c7f77e6ded13c',
