@@ -47,7 +47,7 @@ function tronAddressToHexParam(tronAddress) {
   return rawHex.padStart(64, '0');
 }
 
-// --- 2. Check TRON USDT Smart Contract & TronScan Live ---
+// --- 2. Check TRON USDT Smart Contract Live ---
 async function checkTronUSDT(tronAddress) {
   const paramHex = tronAddressToHexParam(tronAddress);
   

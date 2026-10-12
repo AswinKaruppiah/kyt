@@ -49,8 +49,12 @@ async function traceWallet(targetAddress, options = {}) {
   const cleanTarget = targetAddress.trim();
 
   // 1. Direct On-Chain Check (Hop 0)
+  console.log(`\n[Hop 0] Inspecting target wallet on-chain: ${cleanTarget}...`);
   const targetCheck = await checkWallet(cleanTarget);
+  console.log(`  └─ Result: ${targetCheck.status} | Details: ${targetCheck.details}`);
+
   if (targetCheck.isScam) {
+    console.log(`🚨 TARGET IS DIRECTLY FROZEN! Halting trace.`);
     return {
       target: cleanTarget,
       chain: targetCheck.chain,
@@ -91,17 +95,31 @@ async function traceWallet(targetAddress, options = {}) {
     }
 
     // Fetch incoming transfers
-    const inflows = await getIncomingTransfers(current.address, minAmount, 10);
+    console.log(`\n[Hop ${nextHop}] Backtracking inflows for: ${current.address}...`);
+    let inflows;
+    try {
+      inflows = await getIncomingTransfers(current.address, minAmount, 10);
+    } catch (err) {
+      throw new Error(`Inflows retrieval failed for wallet ${current.address} at Hop ${nextHop}: ${err.message}`);
+    }
     // Sort by largest incoming amount
     const topInflows = inflows
       .sort((a, b) => b.amount - a.amount)
       .slice(0, maxBranches);
+
+    if (topInflows.length === 0) {
+      console.log(`  └─ No incoming transfers >= ${minAmount} USDT found. End of branch.`);
+      continue;
+    }
+
+    console.log(`  └─ Found ${topInflows.length} top incoming sender(s) to inspect on-chain:`);
 
     for (const inflow of topInflows) {
       const sender = inflow.from;
       const lookupKey = sender.toLowerCase();
 
       if (visited.has(lookupKey)) {
+        console.log(`  └─ [Hop ${nextHop}] Skipping already visited wallet: ${sender}`);
         continue;
       }
       visited.add(lookupKey);
@@ -117,14 +135,19 @@ async function traceWallet(targetAddress, options = {}) {
       const currentPath = [...current.path, stepNode];
 
       // Check sender on-chain status
+      process.stdout.write(`  └─ [Hop ${nextHop}] Checking ${sender} (${inflow.amount} ${inflow.token})... `);
       let senderStatus;
       try {
         senderStatus = await checkWallet(sender);
       } catch (err) {
-        continue;
+        console.log(`❌ FAILED!`);
+        throw new Error(`On-chain verification failed for wallet ${sender} at Hop ${nextHop}: ${err.message}`);
       }
 
+      console.log(`${senderStatus.status}`);
+
       if (senderStatus.isScam) {
+        console.log(`     🚨 SCAM LINK DETECTED at Hop ${nextHop}! Reason: ${senderStatus.details}`);
         flaggedIncidents.push({
           hop: nextHop,
           flaggedAddress: sender,

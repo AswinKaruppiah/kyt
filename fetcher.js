@@ -15,42 +15,40 @@ const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
  * @returns {Promise<Array<{from: string, to: string, amount: number, token: string, txHash: string, timestamp: number}>>}
  */
 async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
-  try {
-    const url = `https://api.trongrid.io/v1/accounts/${tronAddress}/transactions/trc20?limit=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-
-    const json = await res.json();
-    if (!json.data || !Array.isArray(json.data)) return [];
-
-    const results = [];
-    for (const tx of json.data) {
-      // Must be incoming transfer to this address
-      if (tx.to !== tronAddress) continue;
-      if (!tx.from || tx.from === tronAddress) continue;
-
-      const symbol = tx.token_info?.symbol || 'UNKNOWN';
-      const decimals = tx.token_info?.decimals || 6;
-      const rawValue = BigInt(tx.value || 0);
-      const amount = Number(rawValue) / (10 ** decimals);
-
-      // Only track USDT inflows above the minimum threshold
-      if (symbol === 'USDT' && amount >= minAmount) {
-        results.push({
-          from: tx.from,
-          to: tx.to,
-          amount: Math.round(amount * 100) / 100,
-          token: 'USDT (TRC-20)',
-          txHash: tx.transaction_id,
-          timestamp: tx.block_timestamp
-        });
-      }
-    }
-
-    return results;
-  } catch (err) {
-    return [];
+  const url = `https://api.trongrid.io/v1/accounts/${tronAddress}/transactions/trc20?limit=${limit}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`TronGrid Inflows HTTP error: ${res.status} ${res.statusText}`);
   }
+
+  const json = await res.json();
+  if (!json.data || !Array.isArray(json.data)) return [];
+
+  const results = [];
+  for (const tx of json.data) {
+    // Must be incoming transfer to this address
+    if (tx.to !== tronAddress) continue;
+    if (!tx.from || tx.from === tronAddress) continue;
+
+    const symbol = tx.token_info?.symbol || 'UNKNOWN';
+    const decimals = tx.token_info?.decimals || 6;
+    const rawValue = BigInt(tx.value || 0);
+    const amount = Number(rawValue) / (10 ** decimals);
+
+    // Only track USDT inflows above the minimum threshold
+    if (symbol === 'USDT' && amount >= minAmount) {
+      results.push({
+        from: tx.from,
+        to: tx.to,
+        amount: Math.round(amount * 100) / 100,
+        token: 'USDT (TRC-20)',
+        txHash: tx.transaction_id,
+        timestamp: tx.block_timestamp
+      });
+    }
+  }
+
+  return results;
 }
 
 /**
