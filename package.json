@@ -1,0 +1,12 @@
+{
+  "name": "kyt-checker",
+  "version": "1.0.0",
+  "description": "Smart Contract On-Chain KYT Wallet Checker for TRON and EVM (Ethereum / BSC)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.4"
+  }
+}
