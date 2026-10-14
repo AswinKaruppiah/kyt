@@ -3,7 +3,7 @@
  * Traces transaction history up to 3 hops backward to detect links to frozen scam wallets.
  */
 
-const { checkWallet } = require('./index');
+const { checkWallet, askNetworkChoice } = require('./index');
 const { getIncomingTransfers } = require('./fetcher');
 
 /**
@@ -32,6 +32,7 @@ function formatVisualTrail(path, isFlagged = false) {
  * Backtrack a wallet address up to 3 hops.
  * @param {string} targetAddress - TRON (T...) or EVM (0x...) address
  * @param {object} options
+ * @param {string} options.chain - 'eth', 'bsc', or 'all' (default: 'all')
  * @param {number} options.maxHops - Maximum depth to search (default: 3)
  * @param {number} options.maxBranches - Top senders to inspect per hop (default: 3)
  * @param {number} options.minAmount - Minimum transfer amount in USDT to consider (default: 10)
@@ -41,6 +42,7 @@ async function traceWallet(targetAddress, options = {}) {
   const maxHops = options.maxHops || 3;
   const maxBranches = options.maxBranches || 3;
   const minAmount = options.minAmount !== undefined ? options.minAmount : 10;
+  const chain = options.chain || 'eth';
 
   if (!targetAddress || typeof targetAddress !== 'string') {
     throw new Error('Target address must be a valid non-empty string');
@@ -50,7 +52,7 @@ async function traceWallet(targetAddress, options = {}) {
 
   // 1. Direct On-Chain Check (Hop 0)
   console.log(`\n[Hop 0] Inspecting target wallet on-chain: ${cleanTarget}...`);
-  const targetCheck = await checkWallet(cleanTarget);
+  const targetCheck = await checkWallet(cleanTarget, chain);
   console.log(`  └─ Result: ${targetCheck.status} | Details: ${targetCheck.details}`);
 
   if (targetCheck.isScam) {
@@ -98,7 +100,7 @@ async function traceWallet(targetAddress, options = {}) {
     console.log(`\n[Hop ${nextHop}] Backtracking inflows for: ${current.address}...`);
     let inflows;
     try {
-      inflows = await getIncomingTransfers(current.address, minAmount, 10);
+      inflows = await getIncomingTransfers(current.address, minAmount, 10, chain);
     } catch (err) {
       throw new Error(`Inflows retrieval failed for wallet ${current.address} at Hop ${nextHop}: ${err.message}`);
     }
@@ -138,7 +140,7 @@ async function traceWallet(targetAddress, options = {}) {
       process.stdout.write(`  └─ [Hop ${nextHop}] Checking ${sender} (${inflow.amount} ${inflow.token})... `);
       let senderStatus;
       try {
-        senderStatus = await checkWallet(sender);
+        senderStatus = await checkWallet(sender, chain);
       } catch (err) {
         console.log(`❌ FAILED!`);
         throw new Error(`On-chain verification failed for wallet ${sender} at Hop ${nextHop}: ${err.message}`);
@@ -234,21 +236,36 @@ async function traceWallet(targetAddress, options = {}) {
 // ==========================================
 if (require.main === module) {
   const target = process.argv[2];
+  let chainArg = null;
+  let hopsArg = 3;
+
+  if (process.argv[3]) {
+    const val = process.argv[3].toLowerCase();
+    if (val === 'eth' || val === 'bsc' || val === 'all' || val === 'ethereum') {
+      chainArg = val;
+      if (process.argv[4]) hopsArg = parseInt(process.argv[4], 10) || 3;
+    } else if (!isNaN(parseInt(val, 10))) {
+      hopsArg = parseInt(val, 10);
+    }
+  }
 
   if (!target) {
     console.log('--- KYT 3-Hop Backward Tracer ---');
-    console.log('Usage: node tracer.js <WALLET_ADDRESS> [MAX_HOPS]');
-    console.log('\nExample:');
-    console.log('  node tracer.js TCGE3xp6YGRKXxDZiLfysgJW3f22KfMNsW');
+    console.log('Usage: node tracer.js <WALLET_ADDRESS> [eth|bsc|all] [MAX_HOPS]');
+    console.log('\nExamples:');
+    console.log('  node tracer.js 0x497c4860a269a717f20dcea8d9664018ccd49605        (Interactive prompt)');
+    console.log('  node tracer.js 0x497c4860a269a717f20dcea8d9664018ccd49605 bsc 3  (Explicit BSC, 3 hops)');
+    console.log('  node tracer.js TCGE3xp6YGRKXxDZiLfysgJW3f22KfMNsW 3              (TRON, 3 hops)');
     process.exit(0);
   }
 
-  const hopsArg = parseInt(process.argv[3], 10) || 3;
-
   (async () => {
     try {
-      console.log(`\n🔍 Tracing ${target} (Depth: ${hopsArg} hops)...\n`);
-      const report = await traceWallet(target, { maxHops: hopsArg });
+      if (target.startsWith('0x') && !chainArg && process.stdin.isTTY) {
+        chainArg = await askNetworkChoice();
+      }
+      console.log(`\n🔍 Tracing ${target} (Network: ${chainArg ? chainArg.toUpperCase() : 'Auto'}, Depth: ${hopsArg} hops)...\n`);
+      const report = await traceWallet(target, { chain: chainArg, maxHops: hopsArg });
       console.log(JSON.stringify(report, null, 2));
 
       console.log('\n📜 Flow Trail:');
