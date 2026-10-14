@@ -9,7 +9,7 @@ Self-hosted, zero-cost transaction monitoring and money mule detection engine fo
 ## ⚡ Quick Start
 
 ### 1. Direct Wallet Inspection
-Check any TRON or EVM wallet on-chain for Tether freezes, Chainalysis sanctions, and rapid pass-through mule behavior:
+Check any TRON or EVM wallet on-chain for Tether freezes and rapid pass-through mule behavior:
 ```bash
 # TRON wallet
 node index.js TMJPgsSS3BSrWhGTDdDgKKhwqX4grsLKFn

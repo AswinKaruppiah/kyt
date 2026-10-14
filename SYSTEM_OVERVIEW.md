@@ -10,7 +10,7 @@ This project is a high-performance, self-hosted **Know-Your-Transaction (KYT)** 
 Unlike commercial KYT SaaS platforms (Chainalysis, Elliptic, TRM Labs) that cost **$25,000–$60,000+ per year**, this system operates with **$0 monthly infrastructure cost** using public blockchain RPCs, curated on-chain oracle contracts, and generous free-tier API quotas.
 
 It introduces a **Two-Tier Defense Architecture**:
-1. **Tier 1 (Direct On-Chain Freezes)**: Immediate detection of official Tether freezes and OFAC sanctions via live smart contracts and the Chainalysis Sanctions Oracle.
+1. **Tier 1 (Direct On-Chain Freezes)**: Immediate detection of official Tether freezes via live smart contracts on TRON and EVM.
 2. **Tier 2 (Proactive Behavioral Engine)**: Zero-latency detection of high-velocity money mules and transit shell wallets that churn stolen funds within minutes—**blocking scammers before Tether compliance has time to freeze them**.
 
 ---
@@ -34,8 +34,7 @@ It introduces a **Two-Tier Defense Architecture**:
                                                           │
                                  ┌────────────────────────┴────────────────────────┐
                                  │              STEP 1: Tier 1 Inspection          │
-                                 │  - Tether isBlackListed(address)                │
-                                 │  - Chainalysis Sanctions Oracle (OFAC)          │
+                                 │  - Tether isBlackListed(address) on-chain       │
                                  └────────────────────────┬────────────────────────┘
                                                           │
                                      ┌────────────────────┴────────────────────┐
@@ -98,18 +97,13 @@ It introduces a **Two-Tier Defense Architecture**:
 
 ### 2. Alchemy Supernode & Asset Transfers API (for Ethereum & BSC)
 - **Role**:
-  - Private, enterprise-grade RPC endpoint for live smart contract calls (`isBlackListed(address)` on `0xdAC17...`).
-  - Queries the live **Chainalysis Sanctions Oracle** (`0x40C57...`) for OFAC sanctions checks.
+  - Private, enterprise-grade RPC endpoint for live Tether smart contract calls (`isBlackListed(address)` on `0xdAC17...`).
   - Queries `alchemy_getAssetTransfers` for ERC-20 / BEP-20 transfer logs with block timestamps.
   - **No Public Fallbacks**: All EVM queries are routed strictly and reliably through Alchemy's dedicated Supernode, eliminating public RPC rate limits, timeouts, and latency spikes.
 - **Authentication**: Free Tier API Key (`alch_asDYoOuaUbrQhMRFPJbpx`).
 - **Quota**: 300,000,000 Compute Units (CUs) / month on the free tier.
 
-### 3. Chainalysis Sanctions Oracle (`0x40C57923924B5c5c5455c48D93317139ADDaC8fb`)
-- **Role**: An on-chain smart contract deployed by Chainalysis and regularly updated with US Treasury OFAC sanctions lists, queried directly via Alchemy RPC.
-- **Cost**: $0.00 (Public `view` calls consume zero gas).
-
-### 4. Official Smart Contracts Queried Directly
+### 3. Official Tether Smart Contracts Queried Directly
 - **TRON USDT**: `TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t` (via TronGrid)
 - **Ethereum USDT**: `0xdAC17F958D2ee523a2206206994597C13D831ec7` (via Alchemy)
 - **BSC USDT**: `0x55d398326f99059ff775485246999027b3197955` (via Alchemy)
@@ -224,7 +218,6 @@ node tracer.js 0x497c4860a269a717f20dcea8d9664018ccd49605 bsc 2
 | Condition | Risk Score | Decision Label | Action |
 | :--- | :---: | :--- | :--- |
 | Target or Hop 1 Frozen on Tether Contract | **100** | `🔴 REJECT (On-Chain Frozen Scam Wallet)` | Immediate Rejection |
-| Target or Hop 1 Sanctioned by OFAC (Oracle) | **100** | `🔴 REJECT (OFAC Sanctioned on Chainalysis)` | Immediate Rejection |
 | Ultra-Rapid Pass-Through Mule ($\le 15$m, $\ge 80\%$) | **85** | `🔴 BLOCKED (High-Velocity Laundering Mule)` | Block / Quarantine |
 | Rapid Transit Mule ($\le 60$m, $\ge 80\%$) | **75** | `🟡 REVIEW (Rapid Transit Mule Detected)` | Flag for Compliance |
 | Indirect Scam Link (Hop 2 / 1 Middleman) | **65** | `🟡 REVIEW (Indirect Scam Link - Hop 2)` | Enhanced Due Diligence |

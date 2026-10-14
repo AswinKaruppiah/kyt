@@ -1,10 +1,8 @@
 /**
  * KYT Smart Contract On-Chain Wallet Checker
- * Queries live smart contracts:
- *  - TRON USDT: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
- *  - Ethereum / EVM (BSC) USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
- *  - Ethereum / EVM (BSC) USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
- *  - Chainalysis Sanctions Oracle: 0x40C57923924B5c5c5455c48D93317139ADDaC8fb
+ * Queries live Tether smart contracts:
+ *  - TRON TRC-20 USDT: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+ *  - Ethereum ERC-20 / BSC BEP-20 USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
  */
 
 const { ethers } = require("ethers");
@@ -116,34 +114,19 @@ async function checkEvmContracts(evmAddress) {
     provider,
   );
 
-  const sanctionsContract = new ethers.Contract(
-    "0x40C57923924B5c5c5455c48D93317139ADDaC8fb",
-    ["function isSanctioned(address) view returns (bool)"],
-    provider,
-  );
+  // Query Tether USDT freeze status on-chain via Alchemy
+  const isFrozen = await usdtContract.isBlackListed(validAddress).catch(() => false);
 
-  // Query Tether USDT and Chainalysis Sanctions Oracle in parallel via Alchemy
-  const [usdtFrozen, isSanctioned] = await Promise.all([
-    usdtContract.isBlackListed(validAddress).catch(() => false),
-    sanctionsContract.isSanctioned(validAddress).catch(() => false),
-  ]);
-
-  if (usdtFrozen) {
+  if (isFrozen) {
     return {
       isFrozen: true,
       reason: "Frozen on-chain by Tether (EVM / Ethereum / BSC USDT)",
     };
   }
-  if (isSanctioned) {
-    return {
-      isFrozen: true,
-      reason: "Sanctioned by OFAC on Chainalysis Oracle (EVM / Ethereum / BSC)",
-    };
-  }
 
   return {
     isFrozen: false,
-    reason: "Clean on EVM Tether USDT and Chainalysis Sanctions contracts",
+    reason: "Clean on EVM Tether USDT contract",
   };
 }
 
