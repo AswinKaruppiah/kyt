@@ -127,22 +127,15 @@ async function checkEvmContracts(evmAddress) {
         provider,
       );
 
-      const usdcContract = new ethers.Contract(
-        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        ["function isBlacklisted(address) view returns (bool)"],
-        provider,
-      );
-
       const sanctionsContract = new ethers.Contract(
         "0x40C57923924B5c5c5455c48D93317139ADDaC8fb",
         ["function isSanctioned(address) view returns (bool)"],
         provider,
       );
 
-      // Query Tether, Circle, and Chainalysis Sanctions Oracle in parallel
-      const [usdtFrozen, usdcFrozen, isSanctioned] = await Promise.all([
+      // Query Tether USDT and Chainalysis Sanctions Oracle in parallel
+      const [usdtFrozen, isSanctioned] = await Promise.all([
         usdtContract.isBlackListed(validAddress).catch(() => false),
-        usdcContract.isBlacklisted(validAddress).catch(() => false),
         sanctionsContract.isSanctioned(validAddress).catch(() => false),
       ]);
 
@@ -150,12 +143,6 @@ async function checkEvmContracts(evmAddress) {
         return {
           isFrozen: true,
           reason: "Frozen on-chain by Tether (EVM / Ethereum / BSC USDT)",
-        };
-      }
-      if (usdcFrozen) {
-        return {
-          isFrozen: true,
-          reason: "Frozen on-chain by Circle (EVM / Ethereum / BSC USDC)",
         };
       }
       if (isSanctioned) {
@@ -169,7 +156,7 @@ async function checkEvmContracts(evmAddress) {
       return {
         isFrozen: false,
         reason:
-          "Clean on EVM Tether, Circle, and Chainalysis Sanctions contracts",
+          "Clean on EVM Tether USDT and Chainalysis Sanctions contracts",
       };
     } catch (err) {
       lastError = err;

@@ -6,13 +6,11 @@
 
 // --- Configuration & API Keys ---
 const TRON_API_KEY = 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
-const ALCHEMY_API_KEY = ''; // Paste your free Alchemy API key here (https://www.alchemy.com)
+const ALCHEMY_API_KEY = 'alch_asDYoOuaUbrQhMRFPJbpx'; // Paste your free Alchemy API key here (https://www.alchemy.com)
 
 const TRON_USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 const ETH_USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597C13D831ec7';
-const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const BSC_USDT_CONTRACT = '0x55d398326f99059ff775485246999027b3197955';
-const BSC_USDC_CONTRACT = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d';
 
 /**
  * Fetch incoming TRC-20 USDT transfers for a TRON wallet via TronGrid.
@@ -152,9 +150,8 @@ async function fetchBlockscoutFallback(evmAddress, minAmount = 5, limit = 15) {
       const decimals = Number(tx.tokenDecimal || 6);
 
       const isUsdt = contract === ETH_USDT_CONTRACT.toLowerCase() || symbol === 'USDT';
-      const isUsdc = contract === ETH_USDC_CONTRACT.toLowerCase() || symbol === 'USDC';
 
-      if (isUsdt || isUsdc) {
+      if (isUsdt) {
         const rawValue = BigInt(tx.value || 0);
         const amount = Number(rawValue) / (10 ** decimals);
 
@@ -163,7 +160,7 @@ async function fetchBlockscoutFallback(evmAddress, minAmount = 5, limit = 15) {
             from: tx.from,
             to: tx.to,
             amount: Math.round(amount * 100) / 100,
-            token: isUsdt ? 'USDT (ERC-20)' : 'USDC (ERC-20)',
+            token: 'USDT (ERC-20)',
             txHash: tx.hash,
             timestamp: Number(tx.timeStamp) * 1000
           });
@@ -192,10 +189,10 @@ async function fetchEvmInflows(evmAddress, minAmount = 5, limit = 15, chain = 'e
   if (ALCHEMY_API_KEY) {
     if (isBsc) {
       const bscEndpoint = `https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
-      return fetchAlchemyTransfers(bscEndpoint, cleanAddr, [BSC_USDT_CONTRACT, BSC_USDC_CONTRACT], 'BEP-20 / BSC', minAmount, limit);
+      return fetchAlchemyTransfers(bscEndpoint, cleanAddr, [BSC_USDT_CONTRACT], 'BEP-20 / BSC', minAmount, limit);
     } else {
       const ethEndpoint = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
-      return fetchAlchemyTransfers(ethEndpoint, cleanAddr, [ETH_USDT_CONTRACT, ETH_USDC_CONTRACT], 'Ethereum', minAmount, limit);
+      return fetchAlchemyTransfers(ethEndpoint, cleanAddr, [ETH_USDT_CONTRACT], 'ERC-20 / ETH', minAmount, limit);
     }
   }
 
