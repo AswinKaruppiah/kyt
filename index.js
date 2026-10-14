@@ -8,6 +8,8 @@
  */
 
 const { ethers } = require("ethers");
+const { getKnownEntity } = require("./entities");
+const { getMixerInfo } = require("./mixers");
 
 // --- Configuration & API Keys ---
 const TRON_API_KEY = "cd864a5c-18c6-4015-b32e-f1bc31840ad7";
@@ -206,16 +208,36 @@ async function checkWallet(address, chain = null) {
 
   const cleanAddr = address.trim();
 
+  // Check if address is a known Mixer / Laundering Protocol
+  const mixer = getMixerInfo(cleanAddr);
+  if (mixer) {
+    let chainLabel = cleanAddr.startsWith("T") ? "TRON" : (mixer.chain === "BSC" ? "EVM (BNB Smart Chain)" : "EVM (Ethereum)");
+    const tag = mixer.category === "SWAPPER" ? "🔴 HIGH RISK / SWAPPER" : "🔴 SCAM / MIXER";
+    return {
+      address: cleanAddr,
+      chain: chainLabel,
+      entity: mixer.name,
+      isScam: true,
+      status: tag,
+      riskScore: mixer.risk,
+      details: `${mixer.category === "SWAPPER" ? "High-risk instant swapper / pseudo-mixer" : "Sanctioned privacy mixer / laundering protocol"}: ${mixer.name}`,
+    };
+  }
+
+  const entity = getKnownEntity(cleanAddr);
+
   // A. TRON Address Check (Starts with 'T', 34 characters)
   if (cleanAddr.startsWith("T") && cleanAddr.length === 34) {
     const res = await checkTronUSDT(cleanAddr);
+    const details = res.isFrozen ? res.reason : (entity ? `Clean on TRON USDT (${entity.name})` : res.reason);
     return {
       address: cleanAddr,
       chain: "TRON",
+      entity: entity ? entity.name : null,
       isScam: res.isFrozen,
       status: res.isFrozen ? "🔴 SCAM / FROZEN" : "🟢 CLEAN",
       riskScore: res.isFrozen ? 100 : 0,
-      details: res.reason,
+      details: details,
     };
   }
 
@@ -226,13 +248,16 @@ async function checkWallet(address, chain = null) {
     if (chain === "bsc" || chain === "2") chainLabel = "EVM (BNB Smart Chain)";
     else if (chain === "eth" || chain === "1") chainLabel = "EVM (Ethereum)";
 
+    const details = res.isFrozen ? res.reason : (entity ? `Clean on EVM (${entity.name})` : res.reason);
+
     return {
       address: cleanAddr,
       chain: chainLabel,
+      entity: entity ? entity.name : null,
       isScam: res.isFrozen,
       status: res.isFrozen ? "🔴 SCAM / FROZEN" : "🟢 CLEAN",
       riskScore: res.isFrozen ? 100 : 0,
-      details: res.reason,
+      details: details,
     };
   }
 

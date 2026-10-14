@@ -5,6 +5,7 @@
 
 const { checkWallet, askNetworkChoice } = require('./index');
 const { getIncomingTransfers } = require('./fetcher');
+const { getKnownEntity } = require('./entities');
 
 /**
  * Format a human-readable visual trail from the trace path.
@@ -20,9 +21,11 @@ function formatVisualTrail(path, isFlagged = false) {
     const node = path[i];
     const prefix = i === 0 ? '🎯 Target:' : `  └── Hop ${node.hop || i}:`;
     const transferInfo = node.amount ? ` (Inflow: ${node.amount} ${node.token || 'USDT'})` : '';
+    const entityTag = node.entity ? ` 🏦 [${node.entity}]` : '';
+    const mixerTag = node.mixer ? ` 🌪️ [MIXER: ${node.mixer}]` : '';
     const statusTag = (i === path.length - 1 && isFlagged) ? ' 🔴 [FROZEN / SCAM]' : '';
 
-    trail.push(`${prefix} ${node.address}${transferInfo}${statusTag}`);
+    trail.push(`${prefix} ${node.address}${transferInfo}${entityTag}${mixerTag}${statusTag}`);
   }
 
   return trail;
@@ -71,6 +74,23 @@ async function traceWallet(targetAddress, options = {}) {
     };
   }
 
+  if (targetCheck.status && (targetCheck.status.includes('MIXER') || targetCheck.status.includes('SWAPPER'))) {
+    const isSwapper = targetCheck.status.includes('SWAPPER');
+    console.log(`🚨 TARGET IS A KNOWN ${isSwapper ? 'INSTANT SWAPPER' : 'MIXER CONTRACT'}! Halting trace.`);
+    return {
+      target: cleanTarget,
+      chain: targetCheck.chain,
+      decision: `🔴 REJECT (Target is a ${isSwapper ? 'High-Risk Instant Swapper' : 'Sanctioned Mixer Protocol'})`,
+      overallRiskScore: targetCheck.riskScore,
+      scamDetected: true,
+      scamHop: 0,
+      flaggedWallet: cleanTarget,
+      reason: targetCheck.details,
+      visualTrail: formatVisualTrail([{ address: cleanTarget, mixer: targetCheck.entity }], true),
+      stats: { hopsScanned: 0, walletsInspected: 1 }
+    };
+  }
+
   if (targetCheck.isScam) {
     console.log(`🚨 TARGET IS DIRECTLY FROZEN! Halting trace.`);
     return {
@@ -87,6 +107,24 @@ async function traceWallet(targetAddress, options = {}) {
     };
   }
 
+  // 1b. Check if Target is a Known Institutional Entity (CEX / Treasury)
+  const targetEntity = getKnownEntity(cleanTarget);
+  if (targetEntity) {
+    console.log(`🏦 Target is verified ${targetEntity.type}: ${targetEntity.name}. Halting trace.`);
+    return {
+      target: cleanTarget,
+      chain: targetCheck.chain,
+      decision: `🟢 ACCEPT (${targetEntity.name})`,
+      overallRiskScore: 0,
+      scamDetected: false,
+      scamHop: null,
+      flaggedWallet: null,
+      reason: `Target address is verified ${targetEntity.type}: ${targetEntity.name} (Regulated Institutional Entity)`,
+      visualTrail: formatVisualTrail([{ address: cleanTarget, entity: targetEntity.name }]),
+      stats: { hopsScanned: 0, walletsInspected: 1 }
+    };
+  }
+
   // 2. BFS Backtracking Queue
   // Queue elements: { address: string, depth: number, path: Array }
   const queue = [{
@@ -97,6 +135,7 @@ async function traceWallet(targetAddress, options = {}) {
 
   const visited = new Set([cleanTarget.toLowerCase()]);
   const flaggedIncidents = [];
+  const cleanTrails = [];
   let walletsInspected = 1;
   let maxHopReached = 0;
 
@@ -152,6 +191,16 @@ async function traceWallet(targetAddress, options = {}) {
       };
       const currentPath = [...current.path, stepNode];
 
+      // Check if Sender is a Verified CEX Hot Wallet / Treasury
+      const knownEntity = getKnownEntity(sender);
+      if (knownEntity) {
+        stepNode.entity = knownEntity.name;
+        cleanTrails.push(currentPath);
+        console.log(`  └─ [Hop ${nextHop}] 🏦 Sender is verified ${knownEntity.type}: ${knownEntity.name} (Safe branch termination)`);
+        // Regulated exchange KYC absorbs liability; do not traverse deeper
+        continue;
+      }
+
       // Check sender on-chain status
       process.stdout.write(`  └─ [Hop ${nextHop}] Checking ${sender} (${inflow.amount} ${inflow.token})... `);
       let senderStatus;
@@ -165,11 +214,16 @@ async function traceWallet(targetAddress, options = {}) {
       console.log(`${senderStatus.status}`);
 
       if (senderStatus.isScam) {
-        console.log(`     🚨 SCAM LINK DETECTED at Hop ${nextHop}! Reason: ${senderStatus.details}`);
+        const isMixer = senderStatus.status && (senderStatus.status.includes('MIXER') || senderStatus.status.includes('SWAPPER'));
+        if (isMixer) {
+          stepNode.mixer = senderStatus.entity;
+        }
+        console.log(`     🚨 ${isMixer ? 'MIXER / LAUNDERING' : 'SCAM LINK'} DETECTED at Hop ${nextHop}! Reason: ${senderStatus.details}`);
         flaggedIncidents.push({
           hop: nextHop,
           flaggedAddress: sender,
           reason: senderStatus.details,
+          isMixer,
           path: currentPath
         });
         // Stop expanding this branch
@@ -201,15 +255,28 @@ async function traceWallet(targetAddress, options = {}) {
     let decision;
     let score;
 
-    if (closest.hop === 1) {
-      score = 100;
-      decision = '🔴 REJECT (Direct Scam Contact - Hop 1)';
-    } else if (closest.hop === 2) {
-      score = 65;
-      decision = '🟡 REVIEW (Indirect Scam Link - Hop 2 / 1 Middleman)';
+    if (closest.isMixer) {
+      if (closest.hop === 1) {
+        score = 100;
+        decision = '🔴 REJECT (Direct Mixer Laundering - Hop 1)';
+      } else if (closest.hop === 2) {
+        score = 80;
+        decision = '🔴 REJECT (Indirect Mixer Laundering - Hop 2 / 1 Middleman)';
+      } else {
+        score = 50;
+        decision = '🟡 REVIEW (Mixer Laundering Exposure - Hop 3 / 2 Middlemen)';
+      }
     } else {
-      score = 35;
-      decision = '🟡 LOW RISK (Indirect Scam Link - Hop 3 / 2 Middlemen)';
+      if (closest.hop === 1) {
+        score = 100;
+        decision = '🔴 REJECT (Direct Scam Contact - Hop 1)';
+      } else if (closest.hop === 2) {
+        score = 65;
+        decision = '🟡 REVIEW (Indirect Scam Link - Hop 2 / 1 Middleman)';
+      } else {
+        score = 35;
+        decision = '🟡 LOW RISK (Indirect Scam Link - Hop 3 / 2 Middlemen)';
+      }
     }
 
     return {
@@ -239,7 +306,7 @@ async function traceWallet(targetAddress, options = {}) {
     scamHop: null,
     flaggedWallet: null,
     reason: `No links to frozen or blacklisted wallets found across ${maxHopReached || 1} hops`,
-    visualTrail: formatVisualTrail([{ address: cleanTarget }]),
+    visualTrail: formatVisualTrail(cleanTrails.length > 0 ? cleanTrails[0] : [{ address: cleanTarget }]),
     stats: {
       hopsScanned: maxHopReached,
       walletsInspected
