@@ -9,7 +9,8 @@
 
 const { ethers } = require("ethers");
 const { getKnownEntity } = require("./entities");
-const { getMixerInfo } = require("./mixers");
+const { detectTransitMuleCycles } = require("./behavior");
+const { getWalletTransfers } = require("./fetcher");
 
 // --- Configuration & API Keys ---
 const TRON_API_KEY = "cd864a5c-18c6-4015-b32e-f1bc31840ad7";
@@ -201,43 +202,74 @@ function askNetworkChoice() {
 // ==========================================
 // 🚀 MAIN CHECKER FUNCTION
 // ==========================================
-async function checkWallet(address, chain = null) {
+async function checkWallet(address, chain = null, options = { checkBehavior: true }) {
   if (!address || typeof address !== "string") {
     throw new Error("Address must be a valid non-empty string");
   }
 
   const cleanAddr = address.trim();
-
-  // Check if address is a known Mixer / Laundering Protocol
-  const mixer = getMixerInfo(cleanAddr);
-  if (mixer) {
-    let chainLabel = cleanAddr.startsWith("T") ? "TRON" : (mixer.chain === "BSC" ? "EVM (BNB Smart Chain)" : "EVM (Ethereum)");
-    const tag = mixer.category === "SWAPPER" ? "🔴 HIGH RISK / SWAPPER" : "🔴 SCAM / MIXER";
-    return {
-      address: cleanAddr,
-      chain: chainLabel,
-      entity: mixer.name,
-      isScam: true,
-      status: tag,
-      riskScore: mixer.risk,
-      details: `${mixer.category === "SWAPPER" ? "High-risk instant swapper / pseudo-mixer" : "Sanctioned privacy mixer / laundering protocol"}: ${mixer.name}`,
-    };
-  }
-
   const entity = getKnownEntity(cleanAddr);
 
   // A. TRON Address Check (Starts with 'T', 34 characters)
   if (cleanAddr.startsWith("T") && cleanAddr.length === 34) {
     const res = await checkTronUSDT(cleanAddr);
-    const details = res.isFrozen ? res.reason : (entity ? `Clean on TRON USDT (${entity.name})` : res.reason);
+
+    // 1. Direct on-chain freeze
+    if (res.isFrozen) {
+      return {
+        address: cleanAddr,
+        chain: "TRON",
+        entity: entity ? entity.name : null,
+        isScam: true,
+        status: "🔴 SCAM / FROZEN",
+        riskScore: 100,
+        details: res.reason,
+      };
+    }
+
+    // 2. Known Institutional Entity (Whitelisted CEX / Treasury)
+    if (entity) {
+      return {
+        address: cleanAddr,
+        chain: "TRON",
+        entity: entity.name,
+        isScam: false,
+        status: `🟢 ACCEPT (${entity.name})`,
+        riskScore: 0,
+        details: `Verified ${entity.type}: ${entity.name} (Regulated Institutional Entity)`,
+      };
+    }
+
+    // 3. Proactive Behavioral Check (Rapid Pass-Through / Transit Mule)
+    if (options.checkBehavior) {
+      try {
+        const txs = await getWalletTransfers(cleanAddr, 25);
+        const muleAnalysis = detectTransitMuleCycles(txs, cleanAddr);
+        if (muleAnalysis.isMule) {
+          return {
+            address: cleanAddr,
+            chain: "TRON",
+            entity: null,
+            isScam: true,
+            status: muleAnalysis.status,
+            riskScore: muleAnalysis.riskScore,
+            details: `Proactive Behavioral Block: ${muleAnalysis.summary}`,
+            behavior: muleAnalysis,
+          };
+        }
+      } catch (_) {
+        // Fallback silently if history retrieval encounters network issue
+      }
+    }
+
     return {
       address: cleanAddr,
       chain: "TRON",
-      entity: entity ? entity.name : null,
-      isScam: res.isFrozen,
-      status: res.isFrozen ? "🔴 SCAM / FROZEN" : "🟢 CLEAN",
-      riskScore: res.isFrozen ? 100 : 0,
-      details: details,
+      entity: null,
+      isScam: false,
+      status: "🟢 CLEAN",
+      riskScore: 0,
+      details: res.reason,
     };
   }
 
@@ -248,16 +280,62 @@ async function checkWallet(address, chain = null) {
     if (chain === "bsc" || chain === "2") chainLabel = "EVM (BNB Smart Chain)";
     else if (chain === "eth" || chain === "1") chainLabel = "EVM (Ethereum)";
 
-    const details = res.isFrozen ? res.reason : (entity ? `Clean on EVM (${entity.name})` : res.reason);
+    // 1. Direct on-chain freeze
+    if (res.isFrozen) {
+      return {
+        address: cleanAddr,
+        chain: chainLabel,
+        entity: entity ? entity.name : null,
+        isScam: true,
+        status: "🔴 SCAM / FROZEN",
+        riskScore: 100,
+        details: res.reason,
+      };
+    }
+
+    // 2. Known Institutional Entity (Whitelisted CEX / Treasury)
+    if (entity) {
+      return {
+        address: cleanAddr,
+        chain: chainLabel,
+        entity: entity.name,
+        isScam: false,
+        status: `🟢 ACCEPT (${entity.name})`,
+        riskScore: 0,
+        details: `Verified ${entity.type}: ${entity.name} (Regulated Institutional Entity)`,
+      };
+    }
+
+    // 3. Proactive Behavioral Check (Rapid Pass-Through / Transit Mule)
+    if (options.checkBehavior) {
+      try {
+        const txs = await getWalletTransfers(cleanAddr, 25, chain || "eth");
+        const muleAnalysis = detectTransitMuleCycles(txs, cleanAddr);
+        if (muleAnalysis.isMule) {
+          return {
+            address: cleanAddr,
+            chain: chainLabel,
+            entity: null,
+            isScam: true,
+            status: muleAnalysis.status,
+            riskScore: muleAnalysis.riskScore,
+            details: `Proactive Behavioral Block: ${muleAnalysis.summary}`,
+            behavior: muleAnalysis,
+          };
+        }
+      } catch (_) {
+        // Fallback silently
+      }
+    }
 
     return {
       address: cleanAddr,
       chain: chainLabel,
-      entity: entity ? entity.name : null,
-      isScam: res.isFrozen,
-      status: res.isFrozen ? "🔴 SCAM / FROZEN" : "🟢 CLEAN",
-      riskScore: res.isFrozen ? 100 : 0,
-      details: details,
+      entity: null,
+      isScam: false,
+      status: "🟢 CLEAN",
+      riskScore: 0,
+      details: res.reason,
     };
   }
 

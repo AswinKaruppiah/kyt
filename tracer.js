@@ -6,10 +6,11 @@
 const { checkWallet, askNetworkChoice } = require('./index');
 const { getIncomingTransfers } = require('./fetcher');
 const { getKnownEntity } = require('./entities');
+const { analyzePathVelocity } = require('./behavior');
 
 /**
  * Format a human-readable visual trail from the trace path.
- * @param {Array<{address: string, amount?: number, token?: string, hop?: number}>} path
+ * @param {Array<{address: string, amount?: number, token?: string, hop?: number, muleTag?: string, entity?: string}>} path
  * @param {boolean} isFlagged
  * @returns {string[]}
  */
@@ -22,10 +23,10 @@ function formatVisualTrail(path, isFlagged = false) {
     const prefix = i === 0 ? '🎯 Target:' : `  └── Hop ${node.hop || i}:`;
     const transferInfo = node.amount ? ` (Inflow: ${node.amount} ${node.token || 'USDT'})` : '';
     const entityTag = node.entity ? ` 🏦 [${node.entity}]` : '';
-    const mixerTag = node.mixer ? ` 🌪️ [MIXER: ${node.mixer}]` : '';
+    const muleTag = node.muleTag ? ` ${node.muleTag}` : '';
     const statusTag = (i === path.length - 1 && isFlagged) ? ' 🔴 [FROZEN / SCAM]' : '';
 
-    trail.push(`${prefix} ${node.address}${transferInfo}${entityTag}${mixerTag}${statusTag}`);
+    trail.push(`${prefix} ${node.address}${transferInfo}${entityTag}${muleTag}${statusTag}`);
   }
 
   return trail;
@@ -53,9 +54,9 @@ async function traceWallet(targetAddress, options = {}) {
 
   const cleanTarget = targetAddress.trim();
 
-  // 1. Direct On-Chain Check (Hop 0)
+  // 1. Direct On-Chain & Behavioral Check (Hop 0)
   console.log(`\n[Hop 0] Inspecting target wallet on-chain: ${cleanTarget}...`);
-  const targetCheck = await checkWallet(cleanTarget, chain);
+  const targetCheck = await checkWallet(cleanTarget, chain, { checkBehavior: true });
   console.log(`  └─ Result: ${targetCheck.status} | Details: ${targetCheck.details}`);
 
   if (targetCheck.status === '⚠️ INVALID_ADDRESS') {
@@ -74,34 +75,22 @@ async function traceWallet(targetAddress, options = {}) {
     };
   }
 
-  if (targetCheck.status && (targetCheck.status.includes('MIXER') || targetCheck.status.includes('SWAPPER'))) {
-    const isSwapper = targetCheck.status.includes('SWAPPER');
-    console.log(`🚨 TARGET IS A KNOWN ${isSwapper ? 'INSTANT SWAPPER' : 'MIXER CONTRACT'}! Halting trace.`);
+  if (targetCheck.isScam) {
+    const isFrozen = targetCheck.riskScore === 100;
+    const decisionLabel = isFrozen
+      ? '🔴 REJECT (Target Wallet Directly Frozen)'
+      : '🔴 BLOCKED (Target Wallet High-Velocity Laundering Mule)';
+    console.log(`🚨 TARGET FLAGGED! Halting trace.`);
     return {
       target: cleanTarget,
       chain: targetCheck.chain,
-      decision: `🔴 REJECT (Target is a ${isSwapper ? 'High-Risk Instant Swapper' : 'Sanctioned Mixer Protocol'})`,
+      decision: decisionLabel,
       overallRiskScore: targetCheck.riskScore,
       scamDetected: true,
       scamHop: 0,
       flaggedWallet: cleanTarget,
       reason: targetCheck.details,
-      visualTrail: formatVisualTrail([{ address: cleanTarget, mixer: targetCheck.entity }], true),
-      stats: { hopsScanned: 0, walletsInspected: 1 }
-    };
-  }
-
-  if (targetCheck.isScam) {
-    console.log(`🚨 TARGET IS DIRECTLY FROZEN! Halting trace.`);
-    return {
-      target: cleanTarget,
-      chain: targetCheck.chain,
-      decision: '🔴 REJECT (Target Wallet Directly Frozen)',
-      overallRiskScore: 100,
-      scamDetected: true,
-      scamHop: 0,
-      flaggedWallet: cleanTarget,
-      reason: targetCheck.details,
+      behavior: targetCheck.behavior || null,
       visualTrail: formatVisualTrail([{ address: cleanTarget }], true),
       stats: { hopsScanned: 0, walletsInspected: 1 }
     };
@@ -135,6 +124,7 @@ async function traceWallet(targetAddress, options = {}) {
 
   const visited = new Set([cleanTarget.toLowerCase()]);
   const flaggedIncidents = [];
+  const behavioralMules = [];
   const cleanTrails = [];
   let walletsInspected = 1;
   let maxHopReached = 0;
@@ -187,7 +177,8 @@ async function traceWallet(targetAddress, options = {}) {
         amount: inflow.amount,
         token: inflow.token,
         hop: nextHop,
-        txHash: inflow.txHash
+        txHash: inflow.txHash,
+        timestamp: inflow.timestamp
       };
       const currentPath = [...current.path, stepNode];
 
@@ -201,11 +192,32 @@ async function traceWallet(targetAddress, options = {}) {
         continue;
       }
 
+      // Check for rapid transit mule along current path
+      const pathMules = analyzePathVelocity(currentPath);
+      for (const pm of pathMules) {
+        const nodeToTag = currentPath.find(n => n.address.toLowerCase() === pm.address.toLowerCase());
+        if (nodeToTag && !nodeToTag.muleTag) {
+          nodeToTag.muleTag = pm.tag;
+        }
+        if (!behavioralMules.some(bm => bm.address.toLowerCase() === pm.address.toLowerCase())) {
+          behavioralMules.push({
+            hop: pm.hop,
+            address: pm.address,
+            churnMinutes: pm.churnMinutes,
+            passThroughRatio: pm.passThroughRatio,
+            riskScore: pm.riskScore,
+            isUltraRapid: pm.isUltraRapid,
+            reason: pm.description,
+            path: currentPath
+          });
+        }
+      }
+
       // Check sender on-chain status
       process.stdout.write(`  └─ [Hop ${nextHop}] Checking ${sender} (${inflow.amount} ${inflow.token})... `);
       let senderStatus;
       try {
-        senderStatus = await checkWallet(sender, chain);
+        senderStatus = await checkWallet(sender, chain, { checkBehavior: nextHop <= 2 });
       } catch (err) {
         console.log(`❌ FAILED!`);
         throw new Error(`On-chain verification failed for wallet ${sender} at Hop ${nextHop}: ${err.message}`);
@@ -214,20 +226,31 @@ async function traceWallet(targetAddress, options = {}) {
       console.log(`${senderStatus.status}`);
 
       if (senderStatus.isScam) {
-        const isMixer = senderStatus.status && (senderStatus.status.includes('MIXER') || senderStatus.status.includes('SWAPPER'));
-        if (isMixer) {
-          stepNode.mixer = senderStatus.entity;
+        const isFrozen = senderStatus.riskScore === 100;
+        console.log(`     🚨 ${isFrozen ? 'SCAM LINK' : 'MULE'} DETECTED at Hop ${nextHop}! Reason: ${senderStatus.details}`);
+        if (isFrozen) {
+          flaggedIncidents.push({
+            hop: nextHop,
+            flaggedAddress: sender,
+            reason: senderStatus.details,
+            path: currentPath
+          });
+          // Stop expanding this branch
+          break;
+        } else {
+          // Behavioral mule on sender
+          behavioralMules.push({
+            hop: nextHop,
+            address: sender,
+            riskScore: senderStatus.riskScore,
+            isUltraRapid: true,
+            churnMinutes: senderStatus.behavior?.avgChurnMinutes || 5,
+            passThroughRatio: 100,
+            reason: senderStatus.details,
+            path: currentPath
+          });
+          stepNode.muleTag = '⚡ [MULE: Rapid Churn]';
         }
-        console.log(`     🚨 ${isMixer ? 'MIXER / LAUNDERING' : 'SCAM LINK'} DETECTED at Hop ${nextHop}! Reason: ${senderStatus.details}`);
-        flaggedIncidents.push({
-          hop: nextHop,
-          flaggedAddress: sender,
-          reason: senderStatus.details,
-          isMixer,
-          path: currentPath
-        });
-        // Stop expanding this branch
-        break;
       }
 
       // If clean and haven't hit max depth, enqueue for next hop
@@ -247,36 +270,23 @@ async function traceWallet(targetAddress, options = {}) {
   }
 
   // 4. Compute Final Decision & Risk Score
+  // 4a. On-chain frozen takes top priority (Score: 100 on Hop 1, 65 on Hop 2, 35 on Hop 3)
   if (flaggedIncidents.length > 0) {
-    // Pick the closest incident (lowest hop number)
     flaggedIncidents.sort((a, b) => a.hop - b.hop);
     const closest = flaggedIncidents[0];
 
     let decision;
     let score;
 
-    if (closest.isMixer) {
-      if (closest.hop === 1) {
-        score = 100;
-        decision = '🔴 REJECT (Direct Mixer Laundering - Hop 1)';
-      } else if (closest.hop === 2) {
-        score = 80;
-        decision = '🔴 REJECT (Indirect Mixer Laundering - Hop 2 / 1 Middleman)';
-      } else {
-        score = 50;
-        decision = '🟡 REVIEW (Mixer Laundering Exposure - Hop 3 / 2 Middlemen)';
-      }
+    if (closest.hop === 1) {
+      score = 100;
+      decision = '🔴 REJECT (Direct Scam Contact - Hop 1)';
+    } else if (closest.hop === 2) {
+      score = 65;
+      decision = '🟡 REVIEW (Indirect Scam Link - Hop 2 / 1 Middleman)';
     } else {
-      if (closest.hop === 1) {
-        score = 100;
-        decision = '🔴 REJECT (Direct Scam Contact - Hop 1)';
-      } else if (closest.hop === 2) {
-        score = 65;
-        decision = '🟡 REVIEW (Indirect Scam Link - Hop 2 / 1 Middleman)';
-      } else {
-        score = 35;
-        decision = '🟡 LOW RISK (Indirect Scam Link - Hop 3 / 2 Middlemen)';
-      }
+      score = 35;
+      decision = '🟡 LOW RISK (Indirect Scam Link - Hop 3 / 2 Middlemen)';
     }
 
     return {
@@ -289,6 +299,47 @@ async function traceWallet(targetAddress, options = {}) {
       flaggedWallet: closest.flaggedAddress,
       reason: `Funds linked to on-chain frozen wallet at Hop ${closest.hop}: ${closest.reason}`,
       visualTrail: formatVisualTrail(closest.path, true),
+      stats: {
+        hopsScanned: maxHopReached,
+        walletsInspected
+      }
+    };
+  }
+
+  // 4b. Behavioral Rapid Pass-Through Mule Layering (Caught before Tether freeze)
+  if (behavioralMules.length > 0) {
+    behavioralMules.sort((a, b) => a.hop - b.hop);
+    const closestMule = behavioralMules[0];
+
+    let decision;
+    let score;
+
+    if (closestMule.hop === 1) {
+      if (closestMule.isUltraRapid || closestMule.riskScore >= 85) {
+        score = 85;
+        decision = `🔴 BLOCKED (High-Velocity Laundering Mule - Hop 1 / Churned in ${closestMule.churnMinutes}m)`;
+      } else {
+        score = 75;
+        decision = `🟡 REVIEW (Rapid Transit Mule - Hop 1 / Churned in ${closestMule.churnMinutes}m)`;
+      }
+    } else if (closestMule.hop === 2) {
+      score = 60;
+      decision = `🟡 REVIEW (Layer 2 Rapid Transit Mule - Hop 2)`;
+    } else {
+      score = 40;
+      decision = `🟡 LOW RISK (Layer 3 Rapid Transit Mule - Hop 3)`;
+    }
+
+    return {
+      target: cleanTarget,
+      chain: targetCheck.chain,
+      decision,
+      overallRiskScore: score,
+      scamDetected: true,
+      scamHop: closestMule.hop,
+      flaggedWallet: closestMule.address,
+      reason: `Rapid pass-through mule layering detected before Tether blacklist: ${closestMule.reason}`,
+      visualTrail: formatVisualTrail(closestMule.path, false),
       stats: {
         hopsScanned: maxHopReached,
         walletsInspected
