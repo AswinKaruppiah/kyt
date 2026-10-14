@@ -2,11 +2,14 @@
  * KYT Smart Contract On-Chain Wallet Checker
  * Queries live smart contracts:
  *  - TRON USDT: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
- *  - Ethereum USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
- *  - Ethereum USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+ *  - Ethereum / EVM (BSC) USDT: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+ *  - Ethereum / EVM (BSC) USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
  */
 
 const { ethers } = require('ethers');
+
+// --- Configuration & API Keys ---
+const TRON_API_KEY = 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
 
 // --- 1. Base58 Decoder for TRON Addresses ---
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -46,8 +49,6 @@ function tronAddressToHexParam(tronAddress) {
   const rawHex = decoded.slice(1, 21).toString('hex');
   return rawHex.padStart(64, '0');
 }
-
-const TRON_API_KEY = process.env.TRON_API_KEY || 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
 
 // --- 2. Check TRON USDT Smart Contract Live ---
 async function checkTronUSDT(tronAddress) {
@@ -89,6 +90,8 @@ async function checkTronUSDT(tronAddress) {
 }
 
 // --- 3. Check EVM (Ethereum / BSC) Smart Contracts Live ---
+// Since EVM 0x... addresses are identical across Ethereum & BSC,
+// global issuer blacklists (Tether & Circle) apply to the keypair on-chain.
 const ETH_RPCS = [
   'https://ethereum-rpc.publicnode.com',
   'https://cloudflare-eth.com',
@@ -115,27 +118,27 @@ async function checkEvmContracts(evmAddress) {
         provider
       );
 
-      // Query Tether & Circle contracts in parallel for 2x faster execution
+      // Query Tether & Circle contracts in parallel for fast execution
       const [usdtFrozen, usdcFrozen] = await Promise.all([
         usdtContract.isBlackListed(validAddress),
         usdcContract.isBlacklisted(validAddress)
       ]);
 
       if (usdtFrozen) {
-        return { isFrozen: true, reason: 'Frozen on-chain by Tether (Ethereum / BSC USDT)' };
+        return { isFrozen: true, reason: 'Frozen on-chain by Tether (EVM / Ethereum / BSC USDT)' };
       }
       if (usdcFrozen) {
-        return { isFrozen: true, reason: 'Frozen on-chain by Circle (Ethereum USDC)' };
+        return { isFrozen: true, reason: 'Frozen on-chain by Circle (EVM / Ethereum / BSC USDC)' };
       }
 
-      return { isFrozen: false, reason: 'Clean on Ethereum USDT & USDC contracts' };
+      return { isFrozen: false, reason: 'Clean on EVM Tether USDT & Circle USDC contracts' };
     } catch (err) {
       lastError = err;
       continue;
     }
   }
 
-  throw new Error(`All Ethereum RPC providers failed: ${lastError?.message || 'Network error'}`);
+  throw new Error(`All EVM RPC providers failed: ${lastError?.message || 'Network error'}`);
 }
 
 // ==========================================
@@ -161,7 +164,7 @@ async function checkWallet(address) {
     };
   }
 
-  // B. EVM Address Check (Starts with '0x', 42 characters)
+  // B. EVM Address Check (Starts with '0x', 42 characters) - Covers Ethereum & BSC
   if (cleanAddr.startsWith('0x') && cleanAddr.length === 42) {
     const res = await checkEvmContracts(cleanAddr);
     return {
@@ -194,7 +197,7 @@ if (require.main === module) {
     console.log('--- KYT Smart Contract On-Chain Wallet Checker ---');
     console.log('Usage: node index.js <WALLET_ADDRESS>');
     console.log('\nExamples:');
-    console.log('  node index.js 0x497c4860a269a717f20dcea8d9664018ccd49605  (EVM)');
+    console.log('  node index.js 0x497c4860a269a717f20dcea8d9664018ccd49605  (EVM / Ethereum / BSC)');
     console.log('  node index.js TCGE3xp6YGRKXxDZiLfysgJW3f22KfMNsW          (TRON)');
     process.exit(0);
   }

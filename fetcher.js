@@ -1,20 +1,20 @@
 /**
  * Blockchain Inflow Feeder
- * Retrieves recent incoming token transfers (USDT / USDC) for TRON and EVM wallets.
+ * Retrieves recent incoming token transfers (USDT / USDC) for TRON and EVM (Ethereum / BSC) wallets.
  */
 
-const TRON_USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
-const ETH_USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
-const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+// --- Configuration & API Keys ---
+const TRON_API_KEY = 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
+const BSCSCAN_API_KEY = ''; // Paste your free BscScan API key here (https://bscscan.com/myapikey)
 
-const TRON_API_KEY = process.env.TRON_API_KEY || 'cd864a5c-18c6-4015-b32e-f1bc31840ad7';
+const TRON_USDT_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+const ETH_USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597C13D831ec7';
+const ETH_USDC_CONTRACT = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+const BSC_USDT_CONTRACT = '0x55d398326f99059ff775485246999027b3197955';
+const BSC_USDC_CONTRACT = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d';
 
 /**
  * Fetch incoming TRC-20 USDT transfers for a TRON wallet.
- * @param {string} tronAddress
- * @param {number} minAmount - Minimum transfer amount in USDT (filters dust)
- * @param {number} limit - Maximum number of recent transfers
- * @returns {Promise<Array<{from: string, to: string, amount: number, token: string, txHash: string, timestamp: number}>>}
  */
 async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
   const url = `https://api.trongrid.io/v1/accounts/${tronAddress}/transactions/trc20?limit=${limit}`;
@@ -32,7 +32,6 @@ async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
 
   const results = [];
   for (const tx of json.data) {
-    // Must be incoming transfer to this address
     if (tx.to !== tronAddress) continue;
     if (!tx.from || tx.from === tronAddress) continue;
 
@@ -41,7 +40,6 @@ async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
     const rawValue = BigInt(tx.value || 0);
     const amount = Number(rawValue) / (10 ** decimals);
 
-    // Only track USDT inflows above the minimum threshold
     if (symbol === 'USDT' && amount >= minAmount) {
       results.push({
         from: tx.from,
@@ -58,64 +56,97 @@ async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
 }
 
 /**
- * Fetch incoming ERC-20 (USDT / USDC) transfers for an EVM wallet.
- * Uses open Blockscout REST API (100% free, zero API key).
- * @param {string} evmAddress
- * @param {number} minAmount
- * @param {number} limit
- * @returns {Promise<Array<{from: string, to: string, amount: number, token: string, txHash: string, timestamp: number}>>}
+ * Fetch incoming ERC-20 / BEP-20 (USDT / USDC) transfers for an EVM wallet (Ethereum & BSC).
  */
 async function fetchEvmInflows(evmAddress, minAmount = 5, limit = 15) {
+  const cleanAddr = evmAddress.toLowerCase();
+  const results = [];
+
+  // 1. Ethereum transfers via Blockscout (100% free, no key needed)
   try {
-    const cleanAddr = evmAddress.toLowerCase();
     const url = `https://eth.blockscout.com/api?module=account&action=tokentx&address=${cleanAddr}&offset=${limit}`;
     const res = await fetch(url);
-    if (!res.ok) return [];
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json.result)) {
+        for (const tx of json.result) {
+          if (!tx.to || tx.to.toLowerCase() !== cleanAddr) continue;
+          if (!tx.from || tx.from.toLowerCase() === cleanAddr) continue;
 
-    const json = await res.json();
-    if (!json.result || !Array.isArray(json.result)) return [];
+          const contract = (tx.contractAddress || '').toLowerCase();
+          const symbol = tx.tokenSymbol || '';
+          const decimals = Number(tx.tokenDecimal || 6);
 
-    const results = [];
-    for (const tx of json.result) {
-      if (!tx.to || tx.to.toLowerCase() !== cleanAddr) continue;
-      if (!tx.from || tx.from.toLowerCase() === cleanAddr) continue;
+          const isUsdt = contract === ETH_USDT_CONTRACT || symbol === 'USDT';
+          const isUsdc = contract === ETH_USDC_CONTRACT || symbol === 'USDC';
 
-      const contract = (tx.contractAddress || '').toLowerCase();
-      const symbol = tx.tokenSymbol || '';
-      const decimals = Number(tx.tokenDecimal || 6);
+          if (isUsdt || isUsdc) {
+            const rawValue = BigInt(tx.value || 0);
+            const amount = Number(rawValue) / (10 ** decimals);
 
-      const isUsdt = contract === ETH_USDT_CONTRACT || symbol === 'USDT';
-      const isUsdc = contract === ETH_USDC_CONTRACT || symbol === 'USDC';
-
-      if (isUsdt || isUsdc) {
-        const rawValue = BigInt(tx.value || 0);
-        const amount = Number(rawValue) / (10 ** decimals);
-
-        if (amount >= minAmount) {
-          results.push({
-            from: tx.from,
-            to: tx.to,
-            amount: Math.round(amount * 100) / 100,
-            token: isUsdt ? 'USDT (ERC-20)' : 'USDC (ERC-20)',
-            txHash: tx.hash,
-            timestamp: Number(tx.timeStamp) * 1000
-          });
+            if (amount >= minAmount) {
+              results.push({
+                from: tx.from,
+                to: tx.to,
+                amount: Math.round(amount * 100) / 100,
+                token: isUsdt ? 'USDT (ERC-20)' : 'USDC (ERC-20)',
+                txHash: tx.hash,
+                timestamp: Number(tx.timeStamp) * 1000
+              });
+            }
+          }
         }
       }
     }
+  } catch (_) {}
 
-    return results;
-  } catch (err) {
-    return [];
+  // 2. BSC transfers via BscScan (if BSCSCAN_API_KEY configured at top of file)
+  if (BSCSCAN_API_KEY) {
+    try {
+      const url = `https://api.bscscan.com/api?module=account&action=tokentx&address=${cleanAddr}&offset=${limit}&sort=desc&apikey=${BSCSCAN_API_KEY}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.result)) {
+          for (const tx of json.result) {
+            if (!tx.to || tx.to.toLowerCase() !== cleanAddr) continue;
+            if (!tx.from || tx.from.toLowerCase() === cleanAddr) continue;
+
+            const contract = (tx.contractAddress || '').toLowerCase();
+            const symbol = (tx.tokenSymbol || '').toUpperCase();
+            const decimals = Number(tx.tokenDecimal || 18);
+
+            const isUsdt = contract === BSC_USDT_CONTRACT || symbol === 'USDT' || symbol === 'BSC-USD';
+            const isUsdc = contract === BSC_USDC_CONTRACT || symbol === 'USDC';
+
+            if (isUsdt || isUsdc) {
+              const rawValue = BigInt(tx.value || 0);
+              const amount = Number(rawValue) / (10 ** decimals);
+
+              if (amount >= minAmount) {
+                results.push({
+                  from: tx.from,
+                  to: tx.to,
+                  amount: Math.round(amount * 100) / 100,
+                  token: isUsdt ? 'USDT (BEP-20 / BSC)' : 'USDC (BEP-20 / BSC)',
+                  txHash: tx.hash,
+                  timestamp: Number(tx.timeStamp) * 1000
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
+
+  // Sort combined inflows by largest amount first
+  results.sort((a, b) => b.amount - a.amount);
+  return results.slice(0, limit);
 }
 
 /**
  * Universal Inflows Feeder: auto-detects TRON or EVM address.
- * @param {string} address
- * @param {number} minAmount
- * @param {number} limit
- * @returns {Promise<Array<{from: string, to: string, amount: number, token: string, txHash: string, timestamp: number}>>}
  */
 async function getIncomingTransfers(address, minAmount = 5, limit = 10) {
   if (!address || typeof address !== 'string') return [];
