@@ -128,54 +128,7 @@ async function fetchAlchemyTransfers(rpcUrl, evmAddress, contractAddresses, chai
 }
 
 /**
- * Fallback: Fetch incoming ERC-20 transfers from Blockscout (zero API key) if no Alchemy key.
- */
-async function fetchBlockscoutFallback(evmAddress, minAmount = 5, limit = 15) {
-  try {
-    const cleanAddr = evmAddress.toLowerCase();
-    const url = `https://eth.blockscout.com/api?module=account&action=tokentx&address=${cleanAddr}&offset=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-
-    const json = await res.json();
-    if (!json.result || !Array.isArray(json.result)) return [];
-
-    const results = [];
-    for (const tx of json.result) {
-      if (!tx.to || tx.to.toLowerCase() !== cleanAddr) continue;
-      if (!tx.from || tx.from.toLowerCase() === cleanAddr) continue;
-
-      const contract = (tx.contractAddress || '').toLowerCase();
-      const symbol = tx.tokenSymbol || '';
-      const decimals = Number(tx.tokenDecimal || 6);
-
-      const isUsdt = contract === ETH_USDT_CONTRACT.toLowerCase() || symbol === 'USDT';
-
-      if (isUsdt) {
-        const rawValue = BigInt(tx.value || 0);
-        const amount = Number(rawValue) / (10 ** decimals);
-
-        if (amount >= minAmount) {
-          results.push({
-            from: tx.from,
-            to: tx.to,
-            amount: Math.round(amount * 100) / 100,
-            token: 'USDT (ERC-20)',
-            txHash: tx.hash,
-            timestamp: Number(tx.timeStamp) * 1000
-          });
-        }
-      }
-    }
-
-    return results;
-  } catch (_) {
-    return [];
-  }
-}
-
-/**
- * Fetch incoming transfers for an EVM wallet (queries only the selected chain to reduce load).
+ * Fetch incoming transfers for an EVM wallet strictly via Alchemy.
  * @param {string} evmAddress
  * @param {number} minAmount
  * @param {number} limit
@@ -185,23 +138,13 @@ async function fetchEvmInflows(evmAddress, minAmount = 5, limit = 15, chain = 'e
   const cleanAddr = evmAddress.toLowerCase();
   const isBsc = chain === 'bsc' || chain === '2';
 
-  // If Alchemy API Key is configured, query ONLY the selected chain
-  if (ALCHEMY_API_KEY) {
-    if (isBsc) {
-      const bscEndpoint = `https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
-      return fetchAlchemyTransfers(bscEndpoint, cleanAddr, [BSC_USDT_CONTRACT], 'BEP-20 / BSC', minAmount, limit);
-    } else {
-      const ethEndpoint = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
-      return fetchAlchemyTransfers(ethEndpoint, cleanAddr, [ETH_USDT_CONTRACT], 'ERC-20 / ETH', minAmount, limit);
-    }
+  if (isBsc) {
+    const bscEndpoint = `https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+    return fetchAlchemyTransfers(bscEndpoint, cleanAddr, [BSC_USDT_CONTRACT], 'BEP-20 / BSC', minAmount, limit);
+  } else {
+    const ethEndpoint = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+    return fetchAlchemyTransfers(ethEndpoint, cleanAddr, [ETH_USDT_CONTRACT], 'ERC-20 / ETH', minAmount, limit);
   }
-
-  // Fallback: If no Alchemy key is set, use open Blockscout for Ethereum
-  if (!isBsc) {
-    return fetchBlockscoutFallback(cleanAddr, minAmount, limit);
-  }
-
-  return [];
 }
 
 /**

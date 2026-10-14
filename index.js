@@ -101,75 +101,50 @@ async function checkTronUSDT(tronAddress) {
   return { isFrozen: false, reason: "Clean on TRON USDT contract" };
 }
 
-// --- 3. Check EVM (Ethereum / BSC) Smart Contracts Live ---
-// Uses Alchemy private RPC if ALCHEMY_API_KEY is provided, with public fallback RPCs.
-const ETH_RPCS = [
-  "https://ethereum-rpc.publicnode.com",
-  "https://cloudflare-eth.com",
-  "https://rpc.flashbots.net",
-];
-
+// --- 3. Check EVM (Ethereum / BSC) Smart Contracts Live via Alchemy ---
 async function checkEvmContracts(evmAddress) {
   const validAddress = ethers.getAddress(evmAddress.toLowerCase());
+  const rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
-  // Prioritize Alchemy RPC endpoint if key configured
-  const rpcList = ALCHEMY_API_KEY
-    ? [`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`, ...ETH_RPCS]
-    : ETH_RPCS;
+  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, {
+    staticNetwork: true,
+  });
 
-  let lastError = null;
-  for (const url of rpcList) {
-    try {
-      const provider = new ethers.JsonRpcProvider(url, undefined, {
-        staticNetwork: true,
-      });
+  const usdtContract = new ethers.Contract(
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    ["function isBlackListed(address) view returns (bool)"],
+    provider,
+  );
 
-      const usdtContract = new ethers.Contract(
-        "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        ["function isBlackListed(address) view returns (bool)"],
-        provider,
-      );
+  const sanctionsContract = new ethers.Contract(
+    "0x40C57923924B5c5c5455c48D93317139ADDaC8fb",
+    ["function isSanctioned(address) view returns (bool)"],
+    provider,
+  );
 
-      const sanctionsContract = new ethers.Contract(
-        "0x40C57923924B5c5c5455c48D93317139ADDaC8fb",
-        ["function isSanctioned(address) view returns (bool)"],
-        provider,
-      );
+  // Query Tether USDT and Chainalysis Sanctions Oracle in parallel via Alchemy
+  const [usdtFrozen, isSanctioned] = await Promise.all([
+    usdtContract.isBlackListed(validAddress).catch(() => false),
+    sanctionsContract.isSanctioned(validAddress).catch(() => false),
+  ]);
 
-      // Query Tether USDT and Chainalysis Sanctions Oracle in parallel
-      const [usdtFrozen, isSanctioned] = await Promise.all([
-        usdtContract.isBlackListed(validAddress).catch(() => false),
-        sanctionsContract.isSanctioned(validAddress).catch(() => false),
-      ]);
-
-      if (usdtFrozen) {
-        return {
-          isFrozen: true,
-          reason: "Frozen on-chain by Tether (EVM / Ethereum / BSC USDT)",
-        };
-      }
-      if (isSanctioned) {
-        return {
-          isFrozen: true,
-          reason:
-            "Sanctioned by OFAC on Chainalysis Oracle (EVM / Ethereum / BSC)",
-        };
-      }
-
-      return {
-        isFrozen: false,
-        reason:
-          "Clean on EVM Tether USDT and Chainalysis Sanctions contracts",
-      };
-    } catch (err) {
-      lastError = err;
-      continue;
-    }
+  if (usdtFrozen) {
+    return {
+      isFrozen: true,
+      reason: "Frozen on-chain by Tether (EVM / Ethereum / BSC USDT)",
+    };
+  }
+  if (isSanctioned) {
+    return {
+      isFrozen: true,
+      reason: "Sanctioned by OFAC on Chainalysis Oracle (EVM / Ethereum / BSC)",
+    };
   }
 
-  throw new Error(
-    `All EVM RPC providers failed: ${lastError?.message || "Network error"}`,
-  );
+  return {
+    isFrozen: false,
+    reason: "Clean on EVM Tether USDT and Chainalysis Sanctions contracts",
+  };
 }
 
 const readline = require("readline");
