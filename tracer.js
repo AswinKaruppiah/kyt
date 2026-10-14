@@ -55,6 +55,22 @@ async function traceWallet(targetAddress, options = {}) {
   const targetCheck = await checkWallet(cleanTarget, chain);
   console.log(`  └─ Result: ${targetCheck.status} | Details: ${targetCheck.details}`);
 
+  if (targetCheck.status === '⚠️ INVALID_ADDRESS') {
+    console.log(`⚠️ Invalid address format. Halting trace.`);
+    return {
+      target: cleanTarget,
+      chain: targetCheck.chain,
+      decision: '⚠️ REJECT (Invalid Address Format)',
+      overallRiskScore: 0,
+      scamDetected: false,
+      scamHop: null,
+      flaggedWallet: null,
+      reason: targetCheck.details,
+      visualTrail: [`🎯 Target: ${cleanTarget} ⚠️ [INVALID ADDRESS]`],
+      stats: { hopsScanned: 0, walletsInspected: 0 }
+    };
+  }
+
   if (targetCheck.isScam) {
     console.log(`🚨 TARGET IS DIRECTLY FROZEN! Halting trace.`);
     return {

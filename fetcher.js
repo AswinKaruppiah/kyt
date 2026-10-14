@@ -18,6 +18,10 @@ const BSC_USDC_CONTRACT = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d';
  * Fetch incoming TRC-20 USDT transfers for a TRON wallet via TronGrid.
  */
 async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
+  if (!tronAddress || !tronAddress.startsWith('T') || tronAddress.length !== 34) {
+    return [];
+  }
+
   const url = `https://api.trongrid.io/v1/accounts/${tronAddress}/transactions/trc20?limit=${limit}`;
   const res = await fetch(url, {
     headers: {
@@ -25,7 +29,8 @@ async function fetchTronInflows(tronAddress, minAmount = 5, limit = 50) {
     }
   });
   if (!res.ok) {
-    throw new Error(`TronGrid Inflows HTTP error: ${res.status} ${res.statusText}`);
+    // If TronGrid returns an error (e.g. account has no history), return empty gracefully
+    return [];
   }
 
   const json = await res.json();
